@@ -20,58 +20,88 @@
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- CREATE A CATALOG, SCHEMA AND VOLUME TO STORE DATA NEEDED FOR THIS
-# MAGIC CREATE CATALOG IF NOT EXISTS ml_training_<your_initials>;
-# MAGIC USE CATALOG ml_training_<your_initials>;
-# MAGIC CREATE DATABASE IF NOT EXISTS ml_datasets_<your_initials>;
-# MAGIC USE DATABASE ml_datasets_<your_initials>;
-# MAGIC CREATE VOLUME IF NOT EXISTS ml_rawdata_<your_initials>;
+# MAGIC %md
+# MAGIC ## Install packages
+
+# COMMAND ----------
+
+# MAGIC %pip install mlflow==2.10.2
+# MAGIC %pip install xgboost==2.0.3
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Define globals
+
+# COMMAND ----------
+
+your_initials = "<your_initials>"
+databricks_pat = "<databricks_pat>"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Set variables and create catalogs, schemas, and volumes
+
+# COMMAND ----------
+
+session = "morning"
+my_database = f"ml_datasets_{your_initials}"
+ml_rawdata_volume = f"ml_rawdata_{your_initials}"
+ml_tables_volume = f"ml_tables_{your_initials}"
+ml_rawdata_path = f"/Volumes/{session}/{my_database}/ml_rawdata_{your_initials}"
+ml_tables_path = f"/Volumes/{session}/{my_database}/ml_tables_{your_initials}"
+
+print(my_database)
+print(ml_rawdata_volume)
+print(ml_tables_volume)
+print(ml_rawdata_path)
+print(ml_tables_path)
+
+# COMMAND ----------
+
+spark.sql(f"USE CATALOG {session}")
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {my_database}")
+spark.sql(f"USE DATABASE {my_database}")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {ml_rawdata_volume}")
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {ml_tables_volume}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Upload Data to volume
-# MAGIC Get the winequality-red.csv and winequality-white.csv from https://archive.ics.uci.edu/dataset/186/wine+quality and upload data to volume. Follow the instructor.
+# MAGIC Get the winequality-red.csv and winequality-white.csv from https://github.com/AmirLyall/mlWorkshopEndToEnd/tree/main and upload data to your volume. Follow the instructor.
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC Let's use the Databricks Assistant!<br>
-# MAGIC Prompt: Download the winequality-red.csv and winequality-white.csv from https://archive.ics.uci.edu/dataset/186/wine+quality and upload the data to ml_rawdata_<your_initials>
-# MAGIC
-# MAGIC Open up the assistant (cmd + I or click the blue assistant toggle) and then run this prompt in the cell below!
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-whitewine_path = "/Volumes/ml_training_<your_initials>/ml_datasets_<your_initials>/ml_rawdata_<your_initials>/winequality-white.csv"
-redwine_path = "/Volumes/ml_training_<your_initials>/ml_datasets_<your_initials>/ml_rawdata_<your_initials>/winequality-red.csv"
-
+redwine_path = f"{ml_rawdata_path}/winequality-red.csv"
+whitewine_path = f"{ml_rawdata_path}/winequality-white.csv"
+print(redwine_path)
+print(whitewine_path)
 
 # COMMAND ----------
 
 import pandas as pd
 
-white_wine = pd.read_csv(whitewine_path, sep=';')
-red_wine = pd.read_csv(redwine_path, sep=';')
+# Read white wine data
+white_wine = pd.read_csv(whitewine_path, delimiter=";")
+
+# Read red wine data
+red_wine = pd.read_csv(redwine_path, delimiter=";")
 
 # COMMAND ----------
 
-# MAGIC %md Merge the two DataFrames into a single dataset, with a new binary feature "is_red" that indicates whether the wine is red or white.
-
-# COMMAND ----------
-
-#Display this fill in code
+#Display the white_wine dataframe
 display(white_wine)
 
 # COMMAND ----------
 
-#Fill in code 
+#Display the red wine dataframe
 display(red_wine)
+
+# COMMAND ----------
+
+# MAGIC %md Merge the two DataFrames into a single dataset, with a new binary feature "is_red" that indicates whether the wine is red or white.
 
 # COMMAND ----------
 
@@ -145,7 +175,7 @@ for col in data.columns:
 
 # MAGIC %md
 # MAGIC 1. Create a data profile from the dataframe 'data'
-# MAGIC 2. Create a barchart showing how the average volatile acidity differs between red wine and white wine. Then group by wine quality (high vs low). Then stack the different qualities in the bar chart. 
+# MAGIC 2. Create a barchart showing how the average volatile acidity differs between red wine and white wine. Then stack the bar chart. 
 
 # COMMAND ----------
 
@@ -207,44 +237,56 @@ from mlflow.utils.environment import _mlflow_conda_env
 import cloudpickle
 import time
 
-# The predict method of sklearn's RandomForestClassifier returns a binary classification (0 or 1). 
-# The following code creates a wrapper function, SklearnModelWrapper, that uses 
-# the predict_proba method to return the probability that the observation belongs to each class. 
+# The predict method of sklearn's RandomForestClassifier returns a binary classification (0 or 1).
+# The following code creates a wrapper function, SklearnModelWrapper, that uses
+# the predict_proba method to return the probability that the observation belongs to each class.
+
 
 class SklearnModelWrapper(mlflow.pyfunc.PythonModel):
-  def __init__(self, model):
-    self.model = model
-    
-  def predict(self, context, model_input):
-    return self.model.predict_proba(model_input)[:,1]
+    def __init__(self, model):
+        self.model = model
 
-# mlflow.start_run creates a new MLflow run to track the performance of this model. 
+    def predict(self, context, model_input):
+        return self.model.predict_proba(model_input)[:, 1]
+
+
+# mlflow.start_run creates a new MLflow run to track the performance of this model.
 # Within the context, you call mlflow.log_param to keep track of the parameters used, and
 # mlflow.log_metric to record metrics like accuracy.
-with mlflow.start_run(run_name='untuned_random_forest_<your_initials>'):
-  n_estimators = 10
-  model = RandomForestClassifier(n_estimators=n_estimators, random_state=np.random.RandomState(123))
-  model.fit(X_train, y_train)
+with mlflow.start_run(run_name=f"untuned_random_forest_{your_initials}"):
+    n_estimators = 10
+    model = RandomForestClassifier(
+        n_estimators=n_estimators, random_state=np.random.RandomState(123)
+    )
+    model.fit(X_train, y_train)
 
-  # predict_proba returns [prob_negative, prob_positive], so slice the output with [:, 1]
-  predictions_test = model.predict_proba(X_test)[:,1]
-  auc_score = roc_auc_score(y_test, predictions_test)
-  mlflow.log_param('n_estimators', n_estimators)
-  # Use the area under the ROC curve as a metric.
-  mlflow.log_metric('auc', auc_score)
-  wrappedModel = SklearnModelWrapper(model)
-  # Log the model with a signature that defines the schema of the model's inputs and outputs. 
-  # When the model is deployed, this signature will be used to validate inputs.
-  signature = infer_signature(X_train, wrappedModel.predict(None, X_train))
-  
-  # MLflow contains utilities to create a conda environment used to serve models.
-  # The necessary dependencies are added to a conda.yaml file which is logged along with the model.
-  conda_env =  _mlflow_conda_env(
+    # predict_proba returns [prob_negative, prob_positive], so slice the output with [:, 1]
+    predictions_test = model.predict_proba(X_test)[:, 1]
+    auc_score = roc_auc_score(y_test, predictions_test)
+    mlflow.log_param("n_estimators", n_estimators)
+    # Use the area under the ROC curve as a metric.
+    mlflow.log_metric("auc", auc_score)
+    wrappedModel = SklearnModelWrapper(model)
+    # Log the model with a signature that defines the schema of the model's inputs and outputs.
+    # When the model is deployed, this signature will be used to validate inputs.
+    signature = infer_signature(X_train, wrappedModel.predict(None, X_train))
+
+    # MLflow contains utilities to create a conda environment used to serve models.
+    # The necessary dependencies are added to a conda.yaml file which is logged along with the model.
+    conda_env = _mlflow_conda_env(
         additional_conda_deps=None,
-        additional_pip_deps=["cloudpickle=={}".format(cloudpickle.__version__), "scikit-learn=={}".format(sklearn.__version__)],
+        additional_pip_deps=[
+            "cloudpickle=={}".format(cloudpickle.__version__),
+            "scikit-learn=={}".format(sklearn.__version__),
+        ],
         additional_conda_channels=None,
     )
-  mlflow.pyfunc.log_model("random_forest_model", python_model=wrappedModel, conda_env=conda_env, signature=signature)
+    mlflow.pyfunc.log_model(
+        "random_forest_model",
+        python_model=wrappedModel,
+        conda_env=conda_env,
+        signature=signature,
+    )
 
 # COMMAND ----------
 
@@ -277,13 +319,19 @@ feature_importances.sort_values('importance', ascending=False)
 
 # COMMAND ----------
 
-run_id = mlflow.search_runs(filter_string='tags.mlflow.runName = "untuned_random_forest_<your_initials>"').iloc[0].run_id
+run_id = (
+    mlflow.search_runs(
+        filter_string=f'tags.mlflow.runName = "untuned_random_forest_{your_initials}"'
+    )
+    .iloc[0]
+    .run_id
+)
 
 # COMMAND ----------
 
-# If you see the error "PERMISSION_DENIED: User does not have any permission level assigned to the registered model", 
+# If you see the error "PERMISSION_DENIED: User does not have any permission level assigned to the registered model",
 # the cause may be that a model already exists with the name "wine_quality". Try using a different name.
-model_name = "wine_quality_<your_initials>"
+model_name = f"wine_quality_{your_initials}"
 model_version = mlflow.register_model(f"runs:/{run_id}/random_forest_model", model_name)
 
 # Registering the model takes a few seconds, so add a small delay
@@ -317,7 +365,7 @@ client.transition_model_version_stage(
 model = mlflow.pyfunc.load_model(f"models:/{model_name}/production")
 
 # Sanity-check: This should match the AUC logged by MLflow
-print(f'AUC: {roc_auc_score(y_test, model.predict(X_test))}')
+print(f"AUC: {roc_auc_score(y_test, model.predict(X_test))}")
 
 # COMMAND ----------
 
@@ -330,7 +378,7 @@ print(f'AUC: {roc_auc_score(y_test, model.predict(X_test))}')
 
 # COMMAND ----------
 
-from hyperopt import fmin, tpe, hp, SparkTrials, Trials, STATUS_OK
+from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
 from hyperopt.pyll import scope
 from math import exp
 import mlflow.xgboost
@@ -338,49 +386,56 @@ import numpy as np
 import xgboost as xgb
 
 search_space = {
-  'max_depth': scope.int(hp.quniform('max_depth', 4, 100, 1)),
-  'learning_rate': hp.loguniform('learning_rate', -3, 0),
-  'reg_alpha': hp.loguniform('reg_alpha', -5, -1),
-  'reg_lambda': hp.loguniform('reg_lambda', -6, -1),
-  'min_child_weight': hp.loguniform('min_child_weight', -1, 3),
-  'objective': 'binary:logistic',
-  'seed': 123, # Set a seed for deterministic training
+    "max_depth": scope.int(hp.quniform("max_depth", 4, 100, 1)),
+    "learning_rate": hp.loguniform("learning_rate", -3, 0),
+    "reg_alpha": hp.loguniform("reg_alpha", -5, -1),
+    "reg_lambda": hp.loguniform("reg_lambda", -6, -1),
+    "min_child_weight": hp.loguniform("min_child_weight", -1, 3),
+    "objective": "binary:logistic",
+    "seed": 123,  # Set a seed for deterministic training
 }
 
+
 def train_model(params):
-  # With MLflow autologging, hyperparameters and the trained model are automatically logged to MLflow.
-  mlflow.xgboost.autolog()
-  with mlflow.start_run(nested=True):
-    train = xgb.DMatrix(data=X_train, label=y_train)
-    validation = xgb.DMatrix(data=X_val, label=y_val)
-    # Pass in the validation set so xgb can track an evaluation metric. XGBoost terminates training when the evaluation metric
-    # is no longer improving.
-    booster = xgb.train(params=params, dtrain=train, num_boost_round=1000,\
-                        evals=[(validation, "validation")], early_stopping_rounds=50)
-    validation_predictions = booster.predict(validation)
-    auc_score = roc_auc_score(y_val, validation_predictions)
-    mlflow.log_metric('auc', auc_score)
+    # With MLflow autologging, hyperparameters and the trained model are automatically logged to MLflow.
+    mlflow.xgboost.autolog()
+    with mlflow.start_run(nested=True):
+        train = xgb.DMatrix(data=X_train, label=y_train)
+        validation = xgb.DMatrix(data=X_val, label=y_val)
+        # Pass in the validation set so xgb can track an evaluation metric. XGBoost terminates training when the evaluation metric
+        # is no longer improving.
+        booster = xgb.train(
+            params=params,
+            dtrain=train,
+            num_boost_round=1000,
+            evals=[(validation, "validation")],
+            early_stopping_rounds=50,
+        )
+        validation_predictions = booster.predict(validation)
+        auc_score = roc_auc_score(y_val, validation_predictions)
+        mlflow.log_metric("auc", auc_score)
 
-    signature = infer_signature(X_train, booster.predict(train))
-    mlflow.xgboost.log_model(booster, "model", signature=signature)
-    
-    # Set the loss to -1*auc_score so fmin maximizes the auc_score
-    return {'status': STATUS_OK, 'loss': -1*auc_score, 'booster': booster.attributes()}
+        signature = infer_signature(X_train, booster.predict(train))
+        mlflow.xgboost.log_model(booster, "model", signature=signature)
 
-# Greater parallelism will lead to speedups, but a less optimal hyperparameter sweep. 
-# A reasonable value for parallelism is the square root of max_evals.
-spark_trials = SparkTrials(parallelism=10)
+        # Set the loss to -1*auc_score so fmin maximizes the auc_score
+        return {
+            "status": STATUS_OK,
+            "loss": -1 * auc_score,
+            "booster": booster.attributes(),
+        }
+
 
 # Run fmin within an MLflow run context so that each hyperparameter configuration is logged as a child run of a parent
-# run called "xgboost_models" .
-with mlflow.start_run(run_name='xgboost_models'):
-  best_params = fmin(
-    fn=train_model, 
-    space=search_space, 
-    algo=tpe.suggest, 
-    max_evals=12,
-    trials=spark_trials,
-  )
+# run called "xgboost_models".
+with mlflow.start_run(run_name="xgboost_models"):
+    best_params = fmin(
+        fn=train_model,
+        space=search_space,
+        algo=tpe.suggest,
+        max_evals=12,
+        trials=Trials(),
+    )
 
 # COMMAND ----------
 
@@ -471,11 +526,11 @@ print(f'AUC: {roc_auc_score(y_test, model.predict(X_test))}')
 
 # COMMAND ----------
 
-# To simulate a new corpus of data, save the existing X_train data to a Delta table. 
+# To simulate a new corpus of data, save the existing X_train data to a Delta table.
 # In the real world, this would be a new batch of data.
 spark_df = spark.createDataFrame(X_train)
 # Replace <username> with your username before running this cell.
-table_path = "dbfs:/<username>/delta/wine_data"
+table_path = f"{ml_tables_path}/delta/wine_data"
 # Delete the contents of this path in case this cell has already been run
 dbutils.fs.rm(table_path, True)
 spark_df.write.format("delta").save(table_path)
@@ -532,8 +587,8 @@ display(new_data)
 
 # COMMAND ----------
 
-import os
-os.environ["DATABRICKS_TOKEN"] = "<YOUR_TOKEN>"
+# import os
+# os.environ["DATABRICKS_TOKEN"] = databricks_pat
 
 # COMMAND ----------
 
@@ -547,18 +602,21 @@ os.environ["DATABRICKS_TOKEN"] = "<YOUR_TOKEN>"
 # COMMAND ----------
 
 # Replace with code snippet from the model serving page
-import os
-import requests
-import pandas as pd
+# import os
+# import requests
+# import pandas as pd
 
-def score_model(dataset: pd.DataFrame):
-  url = 'https://<DATABRICKS_URL>/model/wine_quality/Production/invocations'
-  headers = {'Authorization': f'Bearer {os.environ.get("DATABRICKS_TOKEN")}'}
-  data_json = dataset.to_dict(orient='split')
-  response = requests.request(method='POST', headers=headers, url=url, json=data_json)
-  if response.status_code != 200:
-    raise Exception(f'Request failed with status {response.status_code}, {response.text}')
-  return response.json()
+
+# def score_model(dataset: pd.DataFrame):
+#     url = f"https://<DATABRICKS_URL>/model/wine_quality/Production/invocations"
+#     headers = {"Authorization": f'Bearer {os.environ.get("DATABRICKS_TOKEN")}'}
+#     data_json = dataset.to_dict(orient="split")
+#     response = requests.request(method="POST", headers=headers, url=url, json=data_json)
+#     if response.status_code != 200:
+#         raise Exception(
+#             f"Request failed with status {response.status_code}, {response.text}"
+#         )
+#     return response.json()
 
 # COMMAND ----------
 
@@ -567,12 +625,14 @@ def score_model(dataset: pd.DataFrame):
 
 # COMMAND ----------
 
-# Model serving is designed for low-latency predictions on smaller batches of data
-num_predictions = 5
-served_predictions = score_model(X_test[:num_predictions])
-model_evaluations = model.predict(X_test[:num_predictions])
-# Compare the results from the deployed model and the trained model
-pd.DataFrame({
-  "Model Prediction": model_evaluations,
-  "Served Model Prediction": served_predictions,
-})
+# # Model serving is designed for low-latency predictions on smaller batches of data
+# num_predictions = 5
+# served_predictions = score_model(X_test[:num_predictions])
+# model_evaluations = model.predict(X_test[:num_predictions])
+# # Compare the results from the deployed model and the trained model
+# pd.DataFrame(
+#     {
+#         "Model Prediction": model_evaluations,
+#         "Served Model Prediction": served_predictions,
+#     }
+# )
